@@ -1,6 +1,6 @@
 # Example usage:
-# Without token parallelism: torchrun --nproc-per-node=2 TKNP/tknp_inference_benchmarks.py --tensor-parallel-size 1 --enable-token-parallel --token-parallel-size 2
-# With token parallelism: torchrun --nproc-per-node=8 TKNP/tknp_inference_benchmarks.py --tensor-parallel-size 4 --pipeline-parallel-size 1 --data-parallel-size 1 --enable-token-parallel --token-parallel-size 2
+# With token parallelism: torchrun --nproc-per-node=2 TKNP/tknp_inference_benchmarks.py --tensor-parallel-size 1 --enable-token-parallel --token-parallel-size 2
+# Without token parallelism: torchrun --nproc-per-node=2 TKNP/tknp_inference_benchmarks.py --tensor-parallel-size 1 --pipeline-parallel-size 2 
 # General tests: torchrun --nproc-per-node=1 TKNP/tknp_inference_benchmarks.py --tensor-parallel-size 1
 
 # SPDX-License-Identifier: Apache-2.0
@@ -40,8 +40,8 @@ def parse_args():
                         help="Number of token parallel processes (default: 1)")
     parser.add_argument("--enable-token-parallel", action="store_true",
                         help="Enable token parallelism")
-    parser.add_argument("--model", type=str, default="meta-llama/Llama-3.1-8B",
-                        help="Model name (default: meta-llama/Llama-3.1-8B)")
+    parser.add_argument("--model", type=str, default="meta-llama/Llama-3.1-8B-Instruct",
+                        help="Model name (default: meta-llama/Llama-3.1-8B-Instruct)")
     parser.add_argument("--max-model-len", type=int, default=32768,
                         help="Maximum model length (default: 32768)")
     parser.add_argument("--seed", type=int, default=1,
