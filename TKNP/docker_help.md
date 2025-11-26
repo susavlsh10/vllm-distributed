@@ -55,6 +55,23 @@ dzdo docker run --gpus all -it --rm \
 
 ```
 
+# cuda 12.4 image
+```bash
+dzdo docker run --gpus all -it --rm \
+  --name vllm-12.4 \
+  --ipc=host --shm-size=20g --ulimit memlock=-1 \
+  -p 8002:8002 \
+  -v "$HOME:$HOME" \
+  -v "$HOME/Documents/MLSystems/vllm-distributed:/workspace" \
+  -v /mnt/nvme/hf_cache:/mnt/nvme/hf_cache \
+  -w /workspace \
+  -e HF_HOME=/mnt/nvme/hf_cache \
+  --entrypoint bash \
+  vastai/vllm:v0.8.5-cuda-12.4-pytorch-2.6.0-py312
+
+```
+
+
 if the container is already running 
 
 ```bash
