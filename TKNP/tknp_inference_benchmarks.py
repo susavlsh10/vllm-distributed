@@ -1,5 +1,7 @@
 # Example usage:
-# With token parallelism: torchrun --nproc-per-node=2 TKNP/tknp_inference_benchmarks.py --tensor-parallel-size 1 --enable-token-parallel --token-parallel-size 2
+# With token parallelism: 
+# torchrun --nproc-per-node=2 TKNP/tknp_inference_benchmarks.py --tensor-parallel-size 1 --enable-token-parallel --token-parallel-size 2 --batch-size 8 --seq-length 4096
+
 # Without token parallelism: torchrun --nproc-per-node=2 TKNP/tknp_inference_benchmarks.py --tensor-parallel-size 1 --pipeline-parallel-size 2 
 # General tests: torchrun --nproc-per-node=1 TKNP/tknp_inference_benchmarks.py --tensor-parallel-size 1
 
@@ -51,6 +53,8 @@ def parse_args():
                         help="Batch size for prompts (default: 8)")
     parser.add_argument("--seq-length", type=int, default=128,
                         help="Sequence length for prompts (default: 128)")
+    parser.add_argument("--print-outputs", action="store_true",
+                        help="Print generated outputs")
 
     return parser.parse_args()
 
@@ -61,17 +65,6 @@ np.random.seed(42)
 
 def main():
     args = parse_args()
-
-    # prompts = [
-    #     "Hello, my name is",
-    #     "The president of the United States is",
-    #     "The capital of France is",
-    #     "The future of AI is very",
-    #     "Hello, my name is Jobs",
-    #     "The president of the United States is very",
-    #     "The capital of France is also",
-    #     "The future of AI is very interesting",
-    # ]
 
     # Create sampling parameters, the same across all ranks
     sampling_params = SamplingParams(temperature=0.8, top_p=0.95, max_tokens=16)
@@ -135,7 +128,7 @@ def main():
     outputs = llm.generate(prompts, sampling_params)
 
     # all ranks will have the same outputs
-    if dist.get_rank() == 0:
+    if dist.get_rank() == 0 and args.print_outputs:
         print("-" * 50)
         for output in outputs:
             prompt = output.prompt

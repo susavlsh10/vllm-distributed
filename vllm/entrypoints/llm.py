@@ -1740,6 +1740,13 @@ class LLM:
 
         if use_tqdm:
             pbar.close()
+            # Print final speeds tknp
+            elapsed = pbar.format_dict["elapsed"]
+            if elapsed > 0:
+                final_in_spd = total_in_toks / elapsed
+                final_out_spd = total_out_toks / elapsed
+                print(f"Final speeds - Input: {final_in_spd:.2f} toks/s, Output: {final_out_spd:.2f} toks/s")
+        
         # Sort the outputs by request ID.
         # This is necessary because some requests may be finished earlier than
         # its previous requests.

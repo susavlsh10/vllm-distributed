@@ -82,7 +82,7 @@ dzdo docker run --gpus all -it --rm \
 ```
 
 
-if the container is already running 
+### if the container is already running 
 
 ```bash
 dzdo docker exec -it vllm-run bash
