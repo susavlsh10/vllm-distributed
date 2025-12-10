@@ -253,6 +253,27 @@ class TokenParallelScheduler:
         # print debug info
         if self.rank == 0:
             self.print_debug_info()
+    
+    def calculate_tokens_per_rank(self, num_scheduled_tokens: dict[str, int]) -> np.ndarray:
+        """
+        Calculate the number of scheduled tokens per token parallel rank
+        based on the current assignments.
+
+        Args:
+            num_scheduled_tokens: dict mapping request_id to number of
+                scheduled tokens for that request.
+
+        Returns:
+            np.ndarray of length tknp_world_size with scheduled tokens per rank.
+        """
+        tokens_per_rank = np.zeros(self.tknp_world_size, dtype=np.int32)
+
+        for req_id, num_tokens in num_scheduled_tokens.items():
+            assigned_rank = self.req_to_tknp_rank.get(req_id, None)
+            if assigned_rank is not None:
+                tokens_per_rank[assigned_rank] += num_tokens
+
+        return tokens_per_rank
 
     def free_requests(self, request: Request):
         """
@@ -277,10 +298,16 @@ class TokenParallelScheduler:
             f"[TokenParallelScheduler] Tokens per rank: {self.tknp_tokens_per_rank_cache}"
         )
 
-    def tknp_allocations(self):
+    def tknp_allocations(self, num_scheduled_tokens: dict[str, int]) -> TokenParallelAllocation:
+        """
+        Get the current token parallel allocations.
+        """
+        
+        tokens_per_rank = self.calculate_tokens_per_rank(num_scheduled_tokens)
+
         return TokenParallelAllocation(
             req_to_tknp_rank=self.req_to_tknp_rank,
-            tknp_tokens_per_rank_cache=self.tknp_tokens_per_rank_cache,
+            tknp_tokens_per_rank_cache=tokens_per_rank,
             tknp_reqs_per_rank=self.tknp_reqs_per_rank,
         )
 
@@ -858,7 +885,7 @@ class Scheduler(SchedulerInterface):
 
         # self.token_parallel_scheduler.print_debug_info()
         
-        token_parallel_allocations = self.token_parallel_scheduler.tknp_allocations() if is_tknp_initialized() else None
+        token_parallel_allocations = self.token_parallel_scheduler.tknp_allocations(num_scheduled_tokens) if is_tknp_initialized() else None
         
         scheduler_output = SchedulerOutput(
             scheduled_new_reqs=new_reqs_data,

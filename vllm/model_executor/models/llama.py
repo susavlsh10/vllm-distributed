@@ -222,17 +222,50 @@ class LlamaAttention(nn.Module):
             attn_type=attn_type,
             prefix=f"{prefix}.attn",
         )
+        
+        # tknp 
+        # attn_zero_output = torch.empty((0, self.total_num_heads * self.head_dim), dtype=qkv.dtype, device=qkv.device)
 
+    # # debugging
+    # def forward(
+    #     self,
+    #     positions: torch.Tensor,
+    #     hidden_states: torch.Tensor,
+    # ) -> torch.Tensor:
+
+    #     # print(f"[RANK: {get_tknp_rank()}][LlamaAttention] Layer {self.layer_idx} - before qkv_proj hidden_states : {hidden_states}") if self.layer_idx == 0 else None
+    #     qkv, _ = self.qkv_proj(hidden_states)
+    #     # print(f"[RANK: {get_tknp_rank()}][LlamaAttention] Layer {self.layer_idx} - after qkv_proj qkv : {qkv}. qkv.shape = {qkv.shape}") if self.layer_idx == 0 else None
+
+    #     q, k, v = qkv.split([self.q_size, self.kv_size, self.kv_size], dim=-1)
+    #     # print(f"[RANK: {get_tknp_rank()}][LlamaAttention] Layer {self.layer_idx} - after split q : {q}, k : {k}, v : {v}. q.shape = {q.shape}, k.shape = {k.shape}, v.shape = {v.shape}") if self.layer_idx == 0 else None
+    #     if q.shape[0] > 0:
+    #         q, k = self.rotary_emb(positions, q, k)
+    #         # print(f"[RANK: {get_tknp_rank()}][LlamaAttention] Layer {self.layer_idx} - before attn q : {q}, k : {k}, v : {v}. q.shape = {q.shape}, k.shape = {k.shape}, v.shape = {v.shape}") if self.layer_idx == 0 else None
+    #         attn_output = self.attn(q, k, v)
+    #         # print(f"[RANK: {get_tknp_rank()}][LlamaAttention] Layer {self.layer_idx} - after attn attn_output : {attn_output}. attn_output.shape = {attn_output.shape}") if self.layer_idx == 0 else None
+    #     else:
+    #         attn_output = torch.empty((0, self.total_num_heads * self.head_dim), dtype=qkv.dtype, device=qkv.device)
+    #         # print(f"[RANK: {get_tknp_rank()}][LlamaAttention] Layer {self.layer_idx} - SKIPPING attn since q has 0 tokens. attn_output : {attn_output}. attn_output.shape = {attn_output.shape}") if self.layer_idx == 0 else None
+    #     output, _ = self.o_proj(attn_output)
+    #     # print(f"[RANK: {get_tknp_rank()}][LlamaAttention] Layer {self.layer_idx} - after o_proj output : {output}. ") if self.layer_idx == 0 else None
+
+    #     return output
+    
+    # default
     def forward(
         self,
         positions: torch.Tensor,
         hidden_states: torch.Tensor,
     ) -> torch.Tensor:
 
-        qkv, _ = self.qkv_proj(hidden_states)        
-        q, k, v = qkv.split([self.q_size, self.kv_size, self.kv_size], dim=-1)
-        q, k = self.rotary_emb(positions, q, k)
-        attn_output = self.attn(q, k, v)
+        qkv, _ = self.qkv_proj(hidden_states)
+        if qkv.shape[0] > 0:        
+            q, k, v = qkv.split([self.q_size, self.kv_size, self.kv_size], dim=-1)
+            q, k = self.rotary_emb(positions, q, k)
+            attn_output = self.attn(q, k, v)
+        else:
+            attn_output = torch.empty((0, self.total_num_heads * self.head_dim), dtype=qkv.dtype, device=qkv.device)
         output, _ = self.o_proj(attn_output)
 
         return output
@@ -254,7 +287,6 @@ class LlamaAttention(nn.Module):
             is_neox_style=is_neox_style,
             partial_rotary_factor=self.partial_rotary_factor,
         )
-
 
 
 class LlamaDecoderLayer(nn.Module):
@@ -593,8 +625,10 @@ class LlamaForCausalLM(nn.Module, SupportsLoRA, SupportsPP):
                 prefix=maybe_prefix(prefix, "lm_head"),
             )
             if config.tie_word_embeddings:
-                self.lm_head = self.lm_head.tie_weights(
-                    self.model.embed_tokens)
+                # from vllm.distributed.parallel_state import is_tknp_initialized, get_tknp_rank
+                if not is_tknp_initialized() or is_root_rank():
+                    self.lm_head = self.lm_head.tie_weights(
+                        self.model.embed_tokens)
 
             logit_scale = getattr(config, "logit_scale", 1.0)
             self.logits_processor = LogitsProcessor(self.unpadded_vocab_size,

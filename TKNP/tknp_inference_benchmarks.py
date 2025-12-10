@@ -1,6 +1,6 @@
 # Example usage:
 # With token parallelism: 
-# torchrun --nproc-per-node=2 TKNP/tknp_inference_benchmarks.py --tensor-parallel-size 1 --enable-token-parallel --token-parallel-size 2 --batch-size 8 --seq-length 4096
+# torchrun --nproc-per-node=2 TKNP/tknp_inference_benchmarks.py --tensor-parallel-size 1 --enable-token-parallel --token-parallel-size 2 --batch-size 8 --seq-length 128
 
 # Without token parallelism: torchrun --nproc-per-node=2 TKNP/tknp_inference_benchmarks.py --tensor-parallel-size 1 --pipeline-parallel-size 2 
 # General tests: torchrun --nproc-per-node=1 TKNP/tknp_inference_benchmarks.py --tensor-parallel-size 1
@@ -42,8 +42,8 @@ def parse_args():
                         help="Number of token parallel processes (default: 1)")
     parser.add_argument("--enable-token-parallel", action="store_true",
                         help="Enable token parallelism")
-    parser.add_argument("--model", type=str, default="meta-llama/Llama-3.1-8B-Instruct",
-                        help="Model name (default: meta-llama/Llama-3.1-8B-Instruct)")
+    parser.add_argument("--model", type=str, default="meta-llama/Llama-3.2-1B-Instruct",
+                        help="Model name (default: meta-llama/Llama-3.2-1B-Instruct)")
     parser.add_argument("--max-model-len", type=int, default=32768,
                         help="Maximum model length (default: 32768)")
     parser.add_argument("--seed", type=int, default=1,
@@ -87,6 +87,8 @@ def main():
         "seed": args.seed,
         "enforce_eager": True,
         "enable_prefix_caching": False,  # Disable prefix caching for benchmarking
+        "gpu_memory_utilization": 0.5,  # Max GPU memory utilization 
+        "max_num_batched_tokens": 8192, # max number of tokens in a single forward pass
     }
     
     # Only add token parallel configs if token parallelism is enabled
@@ -133,7 +135,7 @@ def main():
         for output in outputs:
             prompt = output.prompt
             generated_text = output.outputs[0].text
-            print(f"Prompt: {prompt!r}\nGenerated text: {generated_text!r}\n")
+            print(f"Prompt: {prompt[:128]!r} ....\nGenerated text: {generated_text!r}\n")
             print("-" * 50)
             
     # destroy the process group

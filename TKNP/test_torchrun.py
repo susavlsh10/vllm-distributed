@@ -1,6 +1,6 @@
 # Example usage:
 # Without token parallelism: torchrun --nproc-per-node=2 TKNP/test_torchrun.py --tensor-parallel-size 1 --pipeline-parallel-size 1 --enable-token-parallel --token-parallel-size 2
-# With token parallelism: torchrun --nproc-per-node=8 TKNP/test_torchrun.py --tensor-parallel-size 4 --pipeline-parallel-size 1 --data-parallel-size 1 --enable-token-parallel --token-parallel-size 2
+# With token parallelism: torchrun --nproc-per-node=2 TKNP/test_torchrun.py --tensor-parallel-size 1 --pipeline-parallel-size 1 --data-parallel-size 1 --enable-token-parallel --token-parallel-size 2
 # General tests: torchrun --nproc-per-node=1 TKNP/test_torchrun.py --tensor-parallel-size 1
 
 # SPDX-License-Identifier: Apache-2.0

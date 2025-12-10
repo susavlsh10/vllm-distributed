@@ -348,19 +348,37 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         Returns:
             TokenParallelMetadata with rank assignments.
         """
-        if scheduler_output.total_num_scheduled_tokens == self.input_batch.num_reqs:
-            stage = "decode"
-            # logger.debug(f"[RANK {get_tknp_rank()}] TKNP Stage: decode, Need to fix tokens per rank. Note assumes 1 tokens per req")
-            # tokens_per_rank = self.tknp_reqs_per_rank
-            tokens_per_rank = scheduler_output.token_parallel_allocations.tknp_reqs_per_rank
-            
-        else:
-            stage = "prefill"
-            # tokens_per_rank = self.tknp_tokens_per_rank_cache
-            tokens_per_rank = scheduler_output.token_parallel_allocations.tknp_tokens_per_rank_cache
+        stage = "mixed" # vllm batches both prefill and decode together
+        tokens_per_rank = scheduler_output.token_parallel_allocations.tknp_tokens_per_rank_cache
+        # if scheduler_output.total_num_scheduled_tokens == self.input_batch.num_reqs:
+        #     stage = "decode"
+        # else:
+        #     stage = "prefill"
+        # if self.root_rank:
+        #     print(f" TKNP Stage: mixed, tokens_per_rank: {tokens_per_rank_mixed}")
 
+        # if scheduler_output.total_num_scheduled_tokens == self.input_batch.num_reqs:
+        #     stage = "decode"
+        #     # logger.debug(f"[RANK {get_tknp_rank()}] TKNP Stage: decode, Need to fix tokens per rank. Note assumes 1 tokens per req")
+        #     # tokens_per_rank = self.tknp_reqs_per_rank
+        #     tokens_per_rank = scheduler_output.token_parallel_allocations.tknp_reqs_per_rank
+        #     if self.root_rank:
+        #         print(f" TKNP Stage: decode, tokens_per_rank: {tokens_per_rank}")
+            
+        # else:
+        #     stage = "prefill"
+        #     # tokens_per_rank = self.tknp_tokens_per_rank_cache
+        #     tokens_per_rank = scheduler_output.token_parallel_allocations.tknp_tokens_per_rank_cache
+        #     if self.root_rank:
+        #         print(f" TKNP Stage: prefill, tokens_per_rank: {tokens_per_rank}")
+        # if self.root_rank:
+        #     print("===="*40)
+        #     # check tokens_per_rank_mixed == tokens_per_rank when stage is mixed
+        #     if stage == "mixed":
+        #         assert np.array_equal(tokens_per_rank_mixed, tokens_per_rank), "Token mismatch between mixed and current stage"
+                
         rank = get_tknp_rank()
-        
+
         return TokenParallelMetadata(
             num_reqs=self.input_batch.num_reqs,
             num_actual_tokens=total_num_scheduled_tokens,
@@ -372,6 +390,87 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             local_num_tokens=tokens_per_rank[rank],
         )
 
+    # only works with static batching
+    # def _tknp_slicing(self, 
+    #                   scheduler_output: "SchedulerOutput",
+    #                   attn_metadata: dict[str, Any],
+    #                   tknp_metadata: TokenParallelMetadata,
+    #                   positions: torch.Tensor,):
+    #     """Slice attention metadata, positions tensor for token parallelism.
+    #     Selects the appropriate slices of attention metadata and positions from the full tensors.
+    #     TODO: This might not be the most efficient approach, revisit after KV cache optimization.
+
+    #     Args:
+    #         attn_metadata (dict): Dictionary mapping layer names to FlashAttentionMetadata
+    #         tknp_metadata (TokenParallelMetadata): Token parallel metadata with rank assignments
+    #         positions (torch.Tensor): The complete positions tensors for all requests
+    #     """
+    #     rank = tknp_metadata.tknp_rank
+    #     num_actual_tokens = tknp_metadata.local_num_tokens.item()
+    #     tokens_per_rank = tknp_metadata.tokens_per_rank
+        
+    #     # global sequence lengths
+    #     key_0 = attn_metadata.keys().__iter__().__next__()
+    #     # global_seq_lens = attn_metadata[next(iter(attn_metadata))].seq_lens  # Get from any layer
+    #     global_seq_lens = attn_metadata[key_0].seq_lens  # Get from any layer
+        
+    #     # token locations
+    #     tkns_start_loc = np.cumsum(np.concatenate(([0], tokens_per_rank[:-1])))
+    #     tkns_end_loc = np.cumsum(tokens_per_rank)
+
+    #     # request locations
+    #     # tknp_reqs_start_loc = np.cumsum(np.concatenate(([0], self.tknp_reqs_per_rank[:-1])))
+    #     # tknp_reqs_end_loc = np.cumsum(self.tknp_reqs_per_rank)
+
+    #     tknp_reqs_start_loc = np.cumsum(np.concatenate(([0], scheduler_output.token_parallel_allocations.tknp_reqs_per_rank[:-1])))
+    #     tknp_reqs_end_loc = np.cumsum(scheduler_output.token_parallel_allocations.tknp_reqs_per_rank)
+
+    #     # local data
+    #     req_start_idx, req_end_idx = tknp_reqs_start_loc[rank], tknp_reqs_end_loc[rank]
+    #     tkn_start_idx, tkn_end_idx = tkns_start_loc[rank], tkns_end_loc[rank]
+    #     # logger.debug(f"[RANK {rank}] TKNP Slicing: reqs {req_start_idx}-{req_end_idx}, tokens {tkn_start_idx}-{tkn_end_idx}")
+        
+    #     local_seq_lens = global_seq_lens[req_start_idx:req_end_idx].contiguous()
+    #     new_query_start_locs = torch.cumsum(
+    #         torch.cat([torch.tensor([0], device=local_seq_lens.device), local_seq_lens]), dim=0,
+    #         dtype=torch.int32
+    #     )
+    #     new_max_seq_len = local_seq_lens.max().item()
+    #     new_num_reqs = local_seq_lens.size(0)
+    #     # new_max_query_len = 1 if tknp_metadata.stage == "decode" else new_max_seq_len
+        
+    #     # slice position tensor
+    #     positions = positions[tkn_start_idx:tkn_end_idx].contiguous()
+        
+    #     processed_metadata_ids = set()
+    #     for layer_name, metadata in attn_metadata.items():
+    #         metadata_id = id(metadata)
+
+    #         if metadata_id not in processed_metadata_ids:
+    #             # debug 
+    #             # print(f"[RANK {rank}] attention metadata: {metadata}")
+    #             # print(f"[RANK {rank}] tknp metadata: {tknp_metadata}")
+    #             # update metadata
+    #             metadata.num_actual_tokens = num_actual_tokens
+    #             metadata.query_start_loc = new_query_start_locs
+    #             # metadata.max_query_len = new_max_query_len
+    #             metadata.max_seq_len = new_max_seq_len
+    #             metadata.num_reqs = new_num_reqs
+    #             metadata.seq_lens = local_seq_lens
+                
+    #             # slot mappings
+    #             new_slot_mapping = metadata.slot_mapping[tkn_start_idx:tkn_end_idx] #.contiguous()
+    #             metadata.slot_mapping = new_slot_mapping
+                
+    #             # block tables
+    #             new_block_table = metadata.block_table[req_start_idx:req_end_idx] #.contiguous()
+    #             metadata.block_table = new_block_table
+                
+    #             processed_metadata_ids.add(metadata_id)
+                
+    #     return attn_metadata, positions
+
+    # works better, fixes continuous batching 
     def _tknp_slicing(self, 
                       scheduler_output: "SchedulerOutput",
                       attn_metadata: dict[str, Any],
@@ -391,64 +490,228 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         tokens_per_rank = tknp_metadata.tokens_per_rank
         
         # global sequence lengths
-        key_0 = attn_metadata.keys().__iter__().__next__()
-        # global_seq_lens = attn_metadata[next(iter(attn_metadata))].seq_lens  # Get from any layer
+        key_0 = next(iter(attn_metadata.keys()))
         global_seq_lens = attn_metadata[key_0].seq_lens  # Get from any layer
         
-        # token locations
-        tkns_start_loc = np.cumsum(np.concatenate(([0], tokens_per_rank[:-1])))
-        tkns_end_loc = np.cumsum(tokens_per_rank)
-
-        # request locations
-        # tknp_reqs_start_loc = np.cumsum(np.concatenate(([0], self.tknp_reqs_per_rank[:-1])))
-        # tknp_reqs_end_loc = np.cumsum(self.tknp_reqs_per_rank)
-
-        tknp_reqs_start_loc = np.cumsum(np.concatenate(([0], scheduler_output.token_parallel_allocations.tknp_reqs_per_rank[:-1])))
-        tknp_reqs_end_loc = np.cumsum(scheduler_output.token_parallel_allocations.tknp_reqs_per_rank)
-
-        # local data
-        req_start_idx, req_end_idx = tknp_reqs_start_loc[rank], tknp_reqs_end_loc[rank]
-        tkn_start_idx, tkn_end_idx = tkns_start_loc[rank], tkns_end_loc[rank]
-        # logger.debug(f"[RANK {rank}] TKNP Slicing: reqs {req_start_idx}-{req_end_idx}, tokens {tkn_start_idx}-{tkn_end_idx}")
+        # Get request-to-rank mapping
+        req_to_rank = {}
+        for req_id, req_rank in scheduler_output.token_parallel_allocations.req_to_tknp_rank.items():
+            req_to_rank[req_id] = req_rank
         
-        local_seq_lens = global_seq_lens[req_start_idx:req_end_idx].contiguous()
+        # Map request indices to ranks
+        req_ids = self.input_batch.req_ids
+        local_req_indices = []
+        global_to_local_req_map = {}
+        
+        for global_idx, req_id in enumerate(req_ids):
+            if req_to_rank.get(req_id, 0) == rank:
+                local_req_indices.append(global_idx)
+                global_to_local_req_map[global_idx] = len(local_req_indices) - 1
+        
+        if not local_req_indices:
+            # This rank has no requests assigned
+            # Return empty metadata
+            for layer_name, metadata in attn_metadata.items():
+                metadata.num_actual_tokens = 0
+                metadata.query_start_loc = torch.zeros(1, dtype=torch.int32, device=metadata.query_start_loc.device)
+                metadata.max_seq_len = 0
+                metadata.num_reqs = 0
+                metadata.seq_lens = torch.zeros(0, dtype=torch.int32, device=metadata.seq_lens.device)
+                metadata.slot_mapping = torch.zeros(0, dtype=torch.int64, device=metadata.slot_mapping.device)
+                metadata.block_table = torch.zeros(0, metadata.block_table.size(1), dtype=metadata.block_table.dtype, device=metadata.block_table.device)
+            
+            return attn_metadata, torch.zeros(0, dtype=positions.dtype, device=positions.device)
+        
+        # Get local sequence information
+        local_seq_lens = global_seq_lens[local_req_indices].contiguous()
+        
+        # Calculate token ranges for this rank
+        # We need to find which tokens belong to this rank
+        num_scheduled_tokens = np.array([
+            scheduler_output.num_scheduled_tokens[req_id] 
+            for req_id in req_ids
+        ], dtype=np.int32)
+        
+        # Calculate cumulative token positions for all requests
+        cu_tokens = np.concatenate(([0], np.cumsum(num_scheduled_tokens)))
+        
+        # Find which tokens belong to this rank's requests
+        local_token_mask = np.zeros(cu_tokens[-1], dtype=bool)
+        for local_idx, global_idx in enumerate(local_req_indices):
+            start_tok = cu_tokens[global_idx]
+            end_tok = cu_tokens[global_idx + 1]
+            local_token_mask[start_tok:end_tok] = True
+        
+        # Get the actual token indices for this rank
+        local_token_indices = np.where(local_token_mask)[0]
+        
+        # Verify the number of tokens matches
+        assert len(local_token_indices) == num_actual_tokens, \
+            f"Token count mismatch: expected {num_actual_tokens}, got {len(local_token_indices)}"
+        
+        # Create new query start locations
+        local_num_scheduled_tokens = num_scheduled_tokens[local_req_indices]
         new_query_start_locs = torch.cumsum(
-            torch.cat([torch.tensor([0], device=local_seq_lens.device), local_seq_lens]), dim=0,
+            torch.cat([
+                torch.tensor([0], device=local_seq_lens.device), 
+                torch.from_numpy(local_num_scheduled_tokens).to(local_seq_lens.device)
+            ]), 
+            dim=0,
             dtype=torch.int32
         )
-        new_max_seq_len = local_seq_lens.max().item()
-        new_num_reqs = local_seq_lens.size(0)
-        new_max_query_len = 1 if tknp_metadata.stage == "decode" else new_max_seq_len
         
-        # slice position tensor
-        positions = positions[tkn_start_idx:tkn_end_idx].contiguous()
+        new_max_seq_len = local_seq_lens.max().item() if len(local_seq_lens) > 0 else 0
+        new_num_reqs = len(local_req_indices)
         
+        # Slice position tensor
+        positions = positions[local_token_indices].contiguous()
+        
+        # Update metadata for all layers
         processed_metadata_ids = set()
         for layer_name, metadata in attn_metadata.items():
             metadata_id = id(metadata)
 
             if metadata_id not in processed_metadata_ids:
-                
+                # Update metadata
                 metadata.num_actual_tokens = num_actual_tokens
                 metadata.query_start_loc = new_query_start_locs
-                metadata.max_query_len = new_max_query_len
                 metadata.max_seq_len = new_max_seq_len
                 metadata.num_reqs = new_num_reqs
                 metadata.seq_lens = local_seq_lens
                 
-                # slot mappings
-                new_slot_mapping = metadata.slot_mapping[tkn_start_idx:tkn_end_idx] #.contiguous()
+                # Slice slot mappings
+                new_slot_mapping = metadata.slot_mapping[local_token_indices].contiguous()
                 metadata.slot_mapping = new_slot_mapping
                 
-                # block tables
-                new_block_table = metadata.block_table[req_start_idx:req_end_idx] #.contiguous()
+                # Slice block tables
+                new_block_table = metadata.block_table[local_req_indices].contiguous()
                 metadata.block_table = new_block_table
                 
                 processed_metadata_ids.add(metadata_id)
                 
-            # else:
-            #     logger.debug(f"[RANK {rank}] Layer {layer_name} shares metadata with previous layer, skipping slice")
         return attn_metadata, positions
+
+    # def _tknp_slicing(self, 
+    #                 scheduler_output: "SchedulerOutput",
+    #                 attn_metadata: dict[str, Any],
+    #                 tknp_metadata: TokenParallelMetadata,
+    #                 positions: torch.Tensor,):
+    #     """Slice attention metadata, positions tensor for token parallelism.
+    #     Selects the appropriate slices of attention metadata and positions from the full tensors.
+    #     TODO: This might not be the most efficient approach, revisit after KV cache optimization.
+
+    #     Args:
+    #         attn_metadata (dict): Dictionary mapping layer names to FlashAttentionMetadata
+    #         tknp_metadata (TokenParallelMetadata): Token parallel metadata with rank assignments
+    #         positions (torch.Tensor): The complete positions tensors for all requests
+    #     """
+    #     rank = tknp_metadata.tknp_rank
+    #     num_actual_tokens = tknp_metadata.local_num_tokens.item()
+    #     tokens_per_rank = tknp_metadata.tokens_per_rank
+        
+    #     # global sequence lengths
+    #     key_0 = next(iter(attn_metadata.keys()))
+    #     global_seq_lens = attn_metadata[key_0].seq_lens  # Get from any layer
+        
+    #     # Get request-to-rank mapping
+    #     req_to_rank = {}
+    #     for req_id, req_rank in scheduler_output.token_parallel_allocations.req_to_tknp_rank.items():
+    #         req_to_rank[req_id] = req_rank
+        
+    #     # Map request indices to ranks
+    #     req_ids = self.input_batch.req_ids
+    #     local_req_indices = []
+    #     global_to_local_req_map = {}
+        
+    #     for global_idx, req_id in enumerate(req_ids):
+    #         if req_to_rank.get(req_id, 0) == rank:
+    #             local_req_indices.append(global_idx)
+    #             global_to_local_req_map[global_idx] = len(local_req_indices) - 1
+        
+    #     if not local_req_indices:
+    #         # This rank has no requests assigned
+    #         # Return empty metadata
+    #         for layer_name, metadata in attn_metadata.items():
+    #             metadata.num_actual_tokens = 0
+    #             metadata.query_start_loc = torch.zeros(1, dtype=torch.int32, device=metadata.query_start_loc.device)
+    #             metadata.max_seq_len = 0
+    #             metadata.num_reqs = 0
+    #             metadata.seq_lens = torch.zeros(0, dtype=torch.int32, device=metadata.seq_lens.device)
+    #             metadata.slot_mapping = torch.zeros(0, dtype=torch.int64, device=metadata.slot_mapping.device)
+    #             metadata.block_table = torch.zeros((0, metadata.block_table.size(1)), dtype=metadata.block_table.dtype, device=metadata.block_table.device)
+            
+    #         return attn_metadata, torch.zeros(0, dtype=positions.dtype, device=positions.device)
+        
+    #     # Get local sequence information - use numpy array indexing
+    #     local_req_indices_np = np.array(local_req_indices, dtype=np.int64)
+    #     local_seq_lens = global_seq_lens[local_req_indices_np].contiguous()
+        
+    #     # Calculate token ranges for this rank
+    #     # We need to find which tokens belong to this rank
+    #     num_scheduled_tokens = np.array([
+    #         scheduler_output.num_scheduled_tokens[req_id] 
+    #         for req_id in req_ids
+    #     ], dtype=np.int32)
+        
+    #     # Calculate cumulative token positions for all requests
+    #     cu_tokens = np.concatenate(([0], np.cumsum(num_scheduled_tokens)))
+        
+    #     # Find which tokens belong to this rank's requests
+    #     local_token_mask = np.zeros(cu_tokens[-1], dtype=bool)
+    #     for global_idx in local_req_indices:
+    #         start_tok = cu_tokens[global_idx]
+    #         end_tok = cu_tokens[global_idx + 1]
+    #         local_token_mask[start_tok:end_tok] = True
+        
+    #     # Get the actual token indices for this rank
+    #     local_token_indices = np.where(local_token_mask)[0]
+        
+    #     # Verify the number of tokens matches
+    #     assert len(local_token_indices) == num_actual_tokens, \
+    #         f"Token count mismatch: expected {num_actual_tokens}, got {len(local_token_indices)}"
+        
+    #     # Create new query start locations
+    #     local_num_scheduled_tokens = num_scheduled_tokens[local_req_indices_np]
+    #     new_query_start_locs = torch.cumsum(
+    #         torch.cat([
+    #             torch.tensor([0], device=local_seq_lens.device), 
+    #             torch.from_numpy(local_num_scheduled_tokens).to(local_seq_lens.device)
+    #         ]), 
+    #         dim=0,
+    #         dtype=torch.int32
+    #     )
+        
+    #     new_max_seq_len = local_seq_lens.max().item() if len(local_seq_lens) > 0 else 0
+    #     new_num_reqs = len(local_req_indices)
+        
+    #     # Slice position tensor - convert to torch tensor for indexing
+    #     local_token_indices_torch = torch.from_numpy(local_token_indices).to(positions.device)
+    #     positions = positions[local_token_indices_torch].contiguous()
+        
+    #     # Update metadata for all layers
+    #     processed_metadata_ids = set()
+    #     for layer_name, metadata in attn_metadata.items():
+    #         metadata_id = id(metadata)
+
+    #         if metadata_id not in processed_metadata_ids:
+    #             # Update metadata
+    #             metadata.num_actual_tokens = num_actual_tokens
+    #             metadata.query_start_loc = new_query_start_locs
+    #             metadata.max_seq_len = new_max_seq_len
+    #             metadata.num_reqs = new_num_reqs
+    #             metadata.seq_lens = local_seq_lens
+                
+    #             # Slice slot mappings - use torch indexing
+    #             new_slot_mapping = metadata.slot_mapping[local_token_indices_torch].contiguous()
+    #             metadata.slot_mapping = new_slot_mapping
+                
+    #             # Slice block tables - use numpy array for indexing
+    #             new_block_table = metadata.block_table[local_req_indices_np].contiguous()
+    #             metadata.block_table = new_block_table
+                
+    #             processed_metadata_ids.add(metadata_id)
+                
+    #     return attn_metadata, positions
 
     def _may_reorder_batch(self, scheduler_output: "SchedulerOutput") -> None:
         """
@@ -1538,10 +1801,14 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         ):
             self.maybe_setup_kv_connector(scheduler_output)
             
-            
-            # print input ids shape 
-            # print(f" Rank : {get_tknp_rank()} Input IDs shape: {input_ids.shape if input_ids is not None else 'None'}, Positions shape: {positions.shape}, Inputs Embeds shape: {inputs_embeds.shape if inputs_embeds is not None else 'None'}")
-            
+            # print attn metadata for debugging
+            # if self.root_rank:
+            # print("====" * 40) if self.root_rank else None
+            # rank = get_tknp_rank() if is_tknp_initialized() else 0
+            # print(f"[RANK {rank}] TKNP metadata: {tknp_metadata}")
+            # print(f"[RANK {rank}] input_ids shape: {input_ids.shape if input_ids is not None else 'N/A'}")
+            # print(f"[RANK {rank}] num_scheduled_tokens: {scheduler_output.num_scheduled_tokens}")
+
             model_output = self.model(
                 input_ids=input_ids,
                 positions=positions,

@@ -200,7 +200,11 @@ class TokenParallelQKVLinear(QKVParallelLinear):
         x: torch.Tensor,
         metadata: Optional[TokenParallelMetadata],
     ) -> tuple[torch.Tensor, None]:
-        """Fallback path that mimics the legacy even scatter."""
+        """Fallback path that mimics the legacy even scatter. Should only use for dummy run."""
+        if not metadata._dummy_run:
+            logger.info(
+                f"Rank {self.tknp_rank} Warning falling back to legacy TokenParallelQKVLinear forward."
+            )
         if self.is_root_rank:
             if x is None:
                 raise RuntimeError("Root rank received no input tensors.")
