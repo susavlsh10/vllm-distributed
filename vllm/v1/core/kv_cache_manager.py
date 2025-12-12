@@ -17,6 +17,7 @@ from vllm.v1.request import Request, RequestStatus
 
 logger = init_logger(__name__)
 
+from vllm.distributed.parallel_state import get_tknp_rank
 
 @dataclass
 class KVCacheBlocks:
@@ -134,7 +135,8 @@ class KVCacheManager:
         return stats
 
     def get_computed_blocks(self,
-                            request: Request) -> tuple[KVCacheBlocks, int]:
+                            request: Request,
+                            tknp_skip_caching: bool = False) -> tuple[KVCacheBlocks, int]:
         """Get the computed (cached) blocks for the request.
         Note that the computed blocks must be full.
 
@@ -146,6 +148,12 @@ class KVCacheManager:
                 - A list of blocks that are computed for the request.
                 - The number of computed tokens.
         """
+        # TKNP: Skip caching for requests not assigned to this rank
+        if tknp_skip_caching:
+            # logger.info(f"[Rank {get_tknp_rank()}] Skipping cache lookup for request {request.request_id}")
+            return self.create_empty_block_list(), 0
+        # logger.info(f"[Rank {get_tknp_rank()}] Cache lookup for request {request.request_id}")
+        
         # Prefix caching is disabled or
         # When the request requires prompt logprobs, we skip prefix caching.
         if (not self.enable_caching
@@ -273,7 +281,7 @@ class KVCacheManager:
             return None
 
         # Touch the computed blocks to make sure they won't be evicted.
-        if self.enable_caching:
+        if self.enable_caching and not tknp_skip_allocation:
             self.block_pool.touch(new_computed_block_list)
         else:
             assert not any(new_computed_block_list), (
@@ -303,6 +311,7 @@ class KVCacheManager:
             request,
             self.req_to_block_hashes[request.request_id],
             num_tokens_to_cache,
+            tknp_skip_caching=tknp_skip_allocation,
         )
 
         return KVCacheBlocks(new_blocks)

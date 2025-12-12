@@ -662,11 +662,10 @@ class Scheduler(SchedulerInterface):
                 request = self.waiting.peek_request()
 
                 # TKNP: Check rank assignment
-                # if is_tknp_initialized():
-                #     if not self.token_parallel_scheduler.is_current_rank_assigned(request):
-                #         self.waiting.pop_request()
-                #         continue
-
+                tknp_skip_caching = False
+                if is_tknp_initialized():
+                    tknp_skip_caching = not self.token_parallel_scheduler.is_current_rank_assigned(request)
+                    
                 # KVTransfer: skip request if still waiting for remote kvs.
                 if request.status == RequestStatus.WAITING_FOR_REMOTE_KVS:
                     is_ready = self._update_waiting_for_remote_kv(request)
@@ -709,7 +708,9 @@ class Scheduler(SchedulerInterface):
                     # Get locally-cached tokens.
                     new_computed_blocks, num_new_local_computed_tokens = \
                         self.kv_cache_manager.get_computed_blocks(
-                            request)
+                            request,
+                            tknp_skip_caching=tknp_skip_caching,  # TKNP
+                        )
 
                     # Get externally-cached tokens if using a KVConnector.
                     if self.connector is not None:

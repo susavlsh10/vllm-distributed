@@ -1,9 +1,9 @@
 # Example usage:
 # With token parallelism: 
-# torchrun --nproc-per-node=2 TKNP/tknp_inference_benchmarks.py --tensor-parallel-size 1 --enable-token-parallel --token-parallel-size 2 --batch-size 8 --seq-length 128
+# torchrun --nproc-per-node=2 TKNP/test_prefix_caching.py --tensor-parallel-size 1 --enable-token-parallel --token-parallel-size 2 --batch-size 8 --seq-length 128
 
-# Without token parallelism: torchrun --nproc-per-node=2 TKNP/tknp_inference_benchmarks.py --tensor-parallel-size 1 --pipeline-parallel-size 2 
-# General tests: torchrun --nproc-per-node=1 TKNP/tknp_inference_benchmarks.py --tensor-parallel-size 1
+# Without token parallelism: torchrun --nproc-per-node=2 TKNP/test_prefix_caching.py --tensor-parallel-size 1 --pipeline-parallel-size 2 
+# General tests: torchrun --nproc-per-node=1 TKNP/test_prefix_caching.py --tensor-parallel-size 1
 
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
@@ -27,6 +27,7 @@ from prompt_generator import generate_benchmark_prompts
 
 import torch
 import random
+import time
 import numpy as np
 
 def parse_args():
@@ -66,9 +67,6 @@ np.random.seed(42)
 def main():
     args = parse_args()
 
-    # Create sampling parameters, the same across all ranks
-    sampling_params = SamplingParams(temperature=0.8, top_p=0.95, max_tokens=16)
-
     # Use `distributed_executor_backend="external_launcher"` so that
     # this llm engine/instance only creates one worker.
     # it is important to set an explicit seed to make sure that
@@ -86,8 +84,8 @@ def main():
         "max_model_len": args.max_model_len,
         "seed": args.seed,
         "enforce_eager": True,
-        "enable_prefix_caching": False,  # Disable prefix caching for benchmarking
-        "gpu_memory_utilization": 0.9,  # Max GPU memory utilization 
+        "enable_prefix_caching": False,  # Enable or Disable prefix caching for benchmarking
+        "gpu_memory_utilization": 0.8,  # Max GPU memory utilization 
         "max_num_batched_tokens": 8192, # max number of tokens in a single forward pass
     }
     
@@ -123,11 +121,33 @@ def main():
     dist.broadcast_object_list(prompts_list, src=0)
     prompts = prompts_list[0]
     
-    # print(f"Rank {dist.get_rank()} received {len(prompts)} prompts.")
-    # print(f"Rank {dist.get_rank()} prompts: {prompts}")
-    # assert False, "Debugging: Stop execution here to check prompt distribution."
-    
+    # Create sampling parameters, the same across all ranks
+    sampling_params = SamplingParams(temperature=0.8, top_p=0.95, max_tokens=1)
+    # measure time to generate
+    start_time = time.perf_counter()
     outputs = llm.generate(prompts, sampling_params)
+    torch.cuda.synchronize()
+    end_time = time.perf_counter()
+    if dist.get_rank() == 0:
+        print(f"Time taken to generate prefill outputs: {end_time - start_time:.2f} seconds")
+        print("=" * 100)
+
+
+    # Create sampling parameters, the same across all ranks
+    decode_tokens = 10
+    sampling_params = SamplingParams(temperature=0.8, top_p=0.95, max_tokens=decode_tokens)
+    # measure time to generate
+    start_time = time.perf_counter()
+    outputs = llm.generate(prompts, sampling_params)
+    torch.cuda.synchronize()
+    end_time = time.perf_counter()
+    if dist.get_rank() == 0:
+        
+        print(f"Time taken to generate decode outputs: {end_time - start_time:.2f} seconds")
+        average_decode_latency = (end_time - start_time) / (decode_tokens)
+        print(f"Average decode latency: {average_decode_latency:.2f} seconds")  
+        print("=" * 100)
+
 
     # all ranks will have the same outputs
     if dist.get_rank() == 0 and args.print_outputs:
