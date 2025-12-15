@@ -350,33 +350,6 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         """
         stage = "mixed" # vllm batches both prefill and decode together
         tokens_per_rank = scheduler_output.token_parallel_allocations.tknp_tokens_per_rank_cache
-        # if scheduler_output.total_num_scheduled_tokens == self.input_batch.num_reqs:
-        #     stage = "decode"
-        # else:
-        #     stage = "prefill"
-        # if self.root_rank:
-        #     print(f" TKNP Stage: mixed, tokens_per_rank: {tokens_per_rank_mixed}")
-
-        # if scheduler_output.total_num_scheduled_tokens == self.input_batch.num_reqs:
-        #     stage = "decode"
-        #     # logger.debug(f"[RANK {get_tknp_rank()}] TKNP Stage: decode, Need to fix tokens per rank. Note assumes 1 tokens per req")
-        #     # tokens_per_rank = self.tknp_reqs_per_rank
-        #     tokens_per_rank = scheduler_output.token_parallel_allocations.tknp_reqs_per_rank
-        #     if self.root_rank:
-        #         print(f" TKNP Stage: decode, tokens_per_rank: {tokens_per_rank}")
-            
-        # else:
-        #     stage = "prefill"
-        #     # tokens_per_rank = self.tknp_tokens_per_rank_cache
-        #     tokens_per_rank = scheduler_output.token_parallel_allocations.tknp_tokens_per_rank_cache
-        #     if self.root_rank:
-        #         print(f" TKNP Stage: prefill, tokens_per_rank: {tokens_per_rank}")
-        # if self.root_rank:
-        #     print("===="*40)
-        #     # check tokens_per_rank_mixed == tokens_per_rank when stage is mixed
-        #     if stage == "mixed":
-        #         assert np.array_equal(tokens_per_rank_mixed, tokens_per_rank), "Token mismatch between mixed and current stage"
-                
         rank = get_tknp_rank()
 
         return TokenParallelMetadata(
@@ -389,86 +362,31 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             tokens_per_rank=tokens_per_rank,
             local_num_tokens=tokens_per_rank[rank],
         )
-
-    # only works with static batching
-    # def _tknp_slicing(self, 
-    #                   scheduler_output: "SchedulerOutput",
-    #                   attn_metadata: dict[str, Any],
-    #                   tknp_metadata: TokenParallelMetadata,
-    #                   positions: torch.Tensor,):
-    #     """Slice attention metadata, positions tensor for token parallelism.
-    #     Selects the appropriate slices of attention metadata and positions from the full tensors.
-    #     TODO: This might not be the most efficient approach, revisit after KV cache optimization.
-
-    #     Args:
-    #         attn_metadata (dict): Dictionary mapping layer names to FlashAttentionMetadata
-    #         tknp_metadata (TokenParallelMetadata): Token parallel metadata with rank assignments
-    #         positions (torch.Tensor): The complete positions tensors for all requests
-    #     """
-    #     rank = tknp_metadata.tknp_rank
-    #     num_actual_tokens = tknp_metadata.local_num_tokens.item()
-    #     tokens_per_rank = tknp_metadata.tokens_per_rank
         
-    #     # global sequence lengths
-    #     key_0 = attn_metadata.keys().__iter__().__next__()
-    #     # global_seq_lens = attn_metadata[next(iter(attn_metadata))].seq_lens  # Get from any layer
-    #     global_seq_lens = attn_metadata[key_0].seq_lens  # Get from any layer
-        
-    #     # token locations
-    #     tkns_start_loc = np.cumsum(np.concatenate(([0], tokens_per_rank[:-1])))
-    #     tkns_end_loc = np.cumsum(tokens_per_rank)
+    def _tknp_out_sync(self, sampler_output, async_op: bool = True):
+        """Broadcast sampled token ids from root rank to all TKNP ranks.
+        Args:
+            sampler_output: Sampler output containing sampled token ids.
+            async_op (bool): Whether to perform the broadcast asynchronously.
+        Returns:
+            work: The work handle for the asynchronous broadcast.
+        """
 
-    #     # request locations
-    #     # tknp_reqs_start_loc = np.cumsum(np.concatenate(([0], self.tknp_reqs_per_rank[:-1])))
-    #     # tknp_reqs_end_loc = np.cumsum(self.tknp_reqs_per_rank)
-
-    #     tknp_reqs_start_loc = np.cumsum(np.concatenate(([0], scheduler_output.token_parallel_allocations.tknp_reqs_per_rank[:-1])))
-    #     tknp_reqs_end_loc = np.cumsum(scheduler_output.token_parallel_allocations.tknp_reqs_per_rank)
-
-    #     # local data
-    #     req_start_idx, req_end_idx = tknp_reqs_start_loc[rank], tknp_reqs_end_loc[rank]
-    #     tkn_start_idx, tkn_end_idx = tkns_start_loc[rank], tkns_end_loc[rank]
-    #     # logger.debug(f"[RANK {rank}] TKNP Slicing: reqs {req_start_idx}-{req_end_idx}, tokens {tkn_start_idx}-{tkn_end_idx}")
+        sampled_token_ids_to_broadcast = sampler_output.sampled_token_ids
+        # Broadcast from root rank (rank 0) to all TKNP ranks
         
-    #     local_seq_lens = global_seq_lens[req_start_idx:req_end_idx].contiguous()
-    #     new_query_start_locs = torch.cumsum(
-    #         torch.cat([torch.tensor([0], device=local_seq_lens.device), local_seq_lens]), dim=0,
-    #         dtype=torch.int32
-    #     )
-    #     new_max_seq_len = local_seq_lens.max().item()
-    #     new_num_reqs = local_seq_lens.size(0)
-    #     # new_max_query_len = 1 if tknp_metadata.stage == "decode" else new_max_seq_len
+        work = torch.distributed.broadcast(
+            sampled_token_ids_to_broadcast,
+            src=0,  # Root rank
+            group=get_tknp_group().device_group,
+            async_op=async_op  # Make it asynchronous!
+        )
         
-    #     # slice position tensor
-    #     positions = positions[tkn_start_idx:tkn_end_idx].contiguous()
+        # Update sampler_output with broadcasted tokens
+        sampler_output.sampled_token_ids = sampled_token_ids_to_broadcast
         
-    #     processed_metadata_ids = set()
-    #     for layer_name, metadata in attn_metadata.items():
-    #         metadata_id = id(metadata)
-
-    #         if metadata_id not in processed_metadata_ids:
-    #             # debug 
-    #             # print(f"[RANK {rank}] attention metadata: {metadata}")
-    #             # print(f"[RANK {rank}] tknp metadata: {tknp_metadata}")
-    #             # update metadata
-    #             metadata.num_actual_tokens = num_actual_tokens
-    #             metadata.query_start_loc = new_query_start_locs
-    #             # metadata.max_query_len = new_max_query_len
-    #             metadata.max_seq_len = new_max_seq_len
-    #             metadata.num_reqs = new_num_reqs
-    #             metadata.seq_lens = local_seq_lens
-                
-    #             # slot mappings
-    #             new_slot_mapping = metadata.slot_mapping[tkn_start_idx:tkn_end_idx] #.contiguous()
-    #             metadata.slot_mapping = new_slot_mapping
-                
-    #             # block tables
-    #             new_block_table = metadata.block_table[req_start_idx:req_end_idx] #.contiguous()
-    #             metadata.block_table = new_block_table
-                
-    #             processed_metadata_ids.add(metadata_id)
-                
-    #     return attn_metadata, positions
+        # # Store the work handle so we can wait later if needed
+        return work
 
     # works better, fixes continuous batching 
     def _tknp_slicing(self, 
@@ -1892,6 +1810,12 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             )
             sampler_output.sampled_token_ids = output_token_ids
 
+        # TKNP
+        broadcast_work = None
+        if is_tknp_initialized():
+            broadcast_work = self._tknp_out_sync(sampler_output)
+            # self._tknp_out_sync(sampler_output)
+        
         num_nans_in_logits = {}
         if envs.VLLM_COMPUTE_NANS_IN_LOGITS:
             num_nans_in_logits = self._get_nans_in_logits(logits)
@@ -1913,6 +1837,10 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                 # Record the index of the request that should not be sampled,
                 # so that we could clear the sampled tokens before returning.
                 discard_sampled_tokens_req_indices.append(i)
+
+        # TKNP: Wait for broadcast to complete before using sampled_token_ids
+        if broadcast_work is not None:
+            broadcast_work.wait()
 
         # NOTE: GPU -> CPU Sync happens here.
         # Move as many CPU operations as possible before this sync point.

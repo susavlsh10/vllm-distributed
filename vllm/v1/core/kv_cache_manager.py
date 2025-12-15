@@ -311,7 +311,7 @@ class KVCacheManager:
             request,
             self.req_to_block_hashes[request.request_id],
             num_tokens_to_cache,
-            tknp_skip_caching=tknp_skip_allocation,
+            # tknp_skip_caching=tknp_skip_allocation,
         )
 
         return KVCacheBlocks(new_blocks)

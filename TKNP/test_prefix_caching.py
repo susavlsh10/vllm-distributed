@@ -1,9 +1,9 @@
 # Example usage:
 # With token parallelism: 
-# torchrun --nproc-per-node=2 TKNP/test_prefix_caching.py --tensor-parallel-size 1 --enable-token-parallel --token-parallel-size 2 --batch-size 8 --seq-length 128
+# torchrun --nproc-per-node=2 TKNP/test_prefix_caching.py --tensor-parallel-size 1 --enable-token-parallel --token-parallel-size 2 --batch-size 16 --seq-length 2048
 
-# Without token parallelism: torchrun --nproc-per-node=2 TKNP/test_prefix_caching.py --tensor-parallel-size 1 --pipeline-parallel-size 2 
-# General tests: torchrun --nproc-per-node=1 TKNP/test_prefix_caching.py --tensor-parallel-size 1
+# Without token parallelism: torchrun --nproc-per-node=2 TKNP/test_prefix_caching.py --tensor-parallel-size 1 --pipeline-parallel-size 2 --batch-size 16 --seq-length 2048
+# General tests: torchrun --nproc-per-node=2 TKNP/test_prefix_caching.py --tensor-parallel-size 2 --batch-size 16 --seq-length 2048
 
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
@@ -84,7 +84,7 @@ def main():
         "max_model_len": args.max_model_len,
         "seed": args.seed,
         "enforce_eager": True,
-        "enable_prefix_caching": False,  # Enable or Disable prefix caching for benchmarking
+        "enable_prefix_caching": True,  # Enable or Disable prefix caching for benchmarking
         "gpu_memory_utilization": 0.8,  # Max GPU memory utilization 
         "max_num_batched_tokens": 8192, # max number of tokens in a single forward pass
     }
@@ -134,7 +134,7 @@ def main():
 
 
     # Create sampling parameters, the same across all ranks
-    decode_tokens = 10
+    decode_tokens = 100
     sampling_params = SamplingParams(temperature=0.8, top_p=0.95, max_tokens=decode_tokens)
     # measure time to generate
     start_time = time.perf_counter()

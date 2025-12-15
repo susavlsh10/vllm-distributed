@@ -625,7 +625,6 @@ class LlamaForCausalLM(nn.Module, SupportsLoRA, SupportsPP):
                 prefix=maybe_prefix(prefix, "lm_head"),
             )
             if config.tie_word_embeddings:
-                # from vllm.distributed.parallel_state import is_tknp_initialized, get_tknp_rank
                 if not is_tknp_initialized() or is_root_rank():
                     self.lm_head = self.lm_head.tie_weights(
                         self.model.embed_tokens)

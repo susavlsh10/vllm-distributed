@@ -663,8 +663,8 @@ class Scheduler(SchedulerInterface):
 
                 # TKNP: Check rank assignment
                 tknp_skip_caching = False
-                if is_tknp_initialized():
-                    tknp_skip_caching = not self.token_parallel_scheduler.is_current_rank_assigned(request)
+                # if is_tknp_initialized():
+                #     tknp_skip_caching = not self.token_parallel_scheduler.is_current_rank_assigned(request)
                     
                 # KVTransfer: skip request if still waiting for remote kvs.
                 if request.status == RequestStatus.WAITING_FOR_REMOTE_KVS:
