@@ -103,3 +103,13 @@ export VLLM_PRECOMPILED_WHEEL_LOCATION=https://wheels.vllm.ai/${VLLM_COMMIT}/vll
 pip install https://wheels.vllm.ai/${VLLM_COMMIT}/vllm-1.0.0.dev-cp38-abi3-manylinux1_x86_64.whl
 VLLM_USE_PRECOMPILED=1 pip install --editable .
 ```
+
+Fresh copy of vLLM commit : 60dbf7d8f13689b17c88840f3ae4e7a222305f2b
+
+```bash
+# use full commit hash from the main branch
+export VLLM_COMMIT=60dbf7d8f13689b17c88840f3ae4e7a222305f2b 
+export VLLM_PRECOMPILED_WHEEL_LOCATION=https://wheels.vllm.ai/${VLLM_COMMIT}/vllm-1.0.0.dev-cp38-abi3-manylinux1_x86_64.whl
+pip install https://wheels.vllm.ai/${VLLM_COMMIT}/vllm-1.0.0.dev-cp38-abi3-manylinux1_x86_64.whl
+VLLM_USE_PRECOMPILED=1 pip install --editable .
+```
