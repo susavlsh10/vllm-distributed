@@ -1898,7 +1898,7 @@ class ParallelConfig:
     """ Use data parallelism instead of tensor parallelism for vision encoder.
     Only support LLama4 for now"""
 
-    # New fields for HTTP
+    # New fields for TKNP
     token_parallel_size: int = 1
     """Number of token parallel groups for attention layers."""
     enable_token_parallel: bool = False

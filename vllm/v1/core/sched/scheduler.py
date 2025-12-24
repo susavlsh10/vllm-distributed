@@ -52,78 +52,10 @@ logger = init_logger(__name__)
 
 # TKNP-BEGIN: token parallel scheduling helper
 
-# class TokenParallelScheduler:
-    
-#     def __init__(self, vllm_config: VllmConfig):
-#         self.vllm_config = vllm_config
-#         self.parallel_config = vllm_config.parallel_config
-#         self.tknp_world_size = get_tknp_world_size()
-#         self.rank = get_tknp_rank()
-#         # TODO: root rank will store different tokens, fix later
-#         self.next_tknp_rank_assignment = 0  # For round-robin block assignment
-        
-#         # token parallel data structures
-#         self.req_to_tknp_rank: dict[str, int] = {}
-#         self.tknp_tokens_per_rank_cache = np.zeros(self.tknp_world_size, dtype=np.int32)
-#         self.tknp_reqs_per_rank = np.zeros(self.tknp_world_size, dtype=np.int32)
-
-#     def assign_ranks(self, waiting_requests):
-#         """
-#         Assign token parallel ranks to new requests using block-wise assignment.
-#         Updates self.req_to_tknp_rank cache.
-        
-#         Args:
-#             waiting_requests: The waiting queue containing new requests.
-#         """
-#         total_requests = len(waiting_requests)
-#         block_size = max(1, total_requests // self.tknp_world_size) # TODO: fix continuous batching
-#         for idx, requests in enumerate(waiting_requests):
-#             req_id = requests.request_id
-            
-#             # skip if already assigned
-#             if req_id in self.req_to_tknp_rank:
-#                 continue
-
-#             assigned_rank = (idx // block_size) % self.tknp_world_size
-#             self.req_to_tknp_rank[req_id] = assigned_rank
-#             self.tknp_reqs_per_rank[assigned_rank] += 1
-#             self.tknp_tokens_per_rank_cache[assigned_rank] += len(requests.prompt_token_ids)
-
-#             # DEBUG
-#             # logger.info(f"==== [RANK : {self.rank}] Assigned request {req_id} to token parallel rank {assigned_rank} with {len(requests.prompt_token_ids)} tokens, tknp_tokens_per_rank_cache: {self.tknp_tokens_per_rank_cache}.")
-        
-#     def free_requests(self, request: Request):
-#         """
-#         Remove requests from token parallel scheduling cache when they are finished.
-#         """
-#         req_id = request.request_id
-#         if req_id in self.req_to_tknp_rank:
-#             assigned_rank = self.req_to_tknp_rank.pop(req_id)
-#             self.tknp_reqs_per_rank[assigned_rank] -= 1
-#             self.tknp_tokens_per_rank_cache[assigned_rank] -= len(request.prompt_token_ids)
-
-#     def print_debug_info(self):
-#         logger.info(f"[TokenParallelScheduler] Token parallel rank assignments: {self.req_to_tknp_rank}")
-#         logger.info(f"[TokenParallelScheduler] Requests per rank: {self.tknp_reqs_per_rank}")
-#         logger.info(f"[TokenParallelScheduler] Tokens per rank: {self.tknp_tokens_per_rank_cache}")
-
-#     def tknp_allocations(self):
-#         return TokenParallelAllocation(
-#             req_to_tknp_rank=self.req_to_tknp_rank,
-#             tknp_tokens_per_rank_cache=self.tknp_tokens_per_rank_cache,
-#             tknp_reqs_per_rank=self.tknp_reqs_per_rank,
-#         )
-
-#     def is_current_rank_assigned(self, request: Request) -> bool:
-#         """
-#         Check if the current rank is assigned to the given request.
-#         """
-#         req_id = request.request_id
-#         assigned_rank = self.req_to_tknp_rank.get(req_id, None)
-#         return assigned_rank == self.rank
-    
-
 class TokenParallelScheduler:
+    """ Token parallel scheduler that assigns token parallel ranks
+    to requests and keeps track of the assignments.
+    """
     
     def __init__(self, vllm_config: VllmConfig):
         self.vllm_config = vllm_config

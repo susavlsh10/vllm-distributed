@@ -67,6 +67,7 @@ class LLMEngine:
         self.vllm_config = vllm_config
         self.model_config = vllm_config.model_config
         self.cache_config = vllm_config.cache_config
+
         self.log_stats = log_stats
         self.stat_logger: Optional[StatLoggerBase] = None
         if self.log_stats:

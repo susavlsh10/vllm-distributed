@@ -188,7 +188,6 @@ class LLM:
         max_seq_len_to_capture: int = 8192,
         disable_custom_all_reduce: bool = False,
         disable_async_output_proc: bool = False,
-        print_worker_ranks: bool = False,
         hf_token: Optional[Union[bool, str]] = None,
         hf_overrides: Optional[HfOverrides] = None,
         mm_processor_kwargs: Optional[dict[str, Any]] = None,
@@ -198,6 +197,7 @@ class LLM:
         **kwargs,
     ) -> None:
         """LLM constructor."""
+
         if "disable_log_stats" not in kwargs:
             kwargs["disable_log_stats"] = True
 
@@ -262,7 +262,6 @@ class LLM:
             max_seq_len_to_capture=max_seq_len_to_capture,
             disable_custom_all_reduce=disable_custom_all_reduce,
             disable_async_output_proc=disable_async_output_proc,
-            print_worker_ranks=print_worker_ranks,
             hf_token=hf_token,
             hf_overrides=hf_overrides,
             mm_processor_kwargs=mm_processor_kwargs,
@@ -1740,7 +1739,6 @@ class LLM:
 
         if use_tqdm:
             pbar.close()
-        
         # Sort the outputs by request ID.
         # This is necessary because some requests may be finished earlier than
         # its previous requests.

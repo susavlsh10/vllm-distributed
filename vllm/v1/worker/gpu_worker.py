@@ -38,51 +38,9 @@ if TYPE_CHECKING:
     from vllm.v1.core.sched.output import SchedulerOutput
 
 from vllm.distributed.parallel_state import (
-    get_tknp_rank, 
-    get_tknp_world_size, 
-    get_tknp_group, 
-    is_tknp_initialized,
+    _print_worker_rank_info,
     is_root_rank,
 )
-
-def _print_worker_rank_info(rank: int) -> None:
-    """Print rank information for this worker process."""
-    import os
-    from vllm.distributed.parallel_state import (
-        get_tp_group, get_pp_group, get_dp_group
-    )
-    global_rank = torch.distributed.get_rank()
-    
-    logger.info(f"Worker Rank {global_rank} (PID: {os.getpid()}) - Parallel Groups:")
-    
-    # Print tensor parallel group ranks
-    try:
-        tp_group = get_tp_group()
-        logger.info(f"Rank {global_rank}: Tensor Parallel: {sorted(tp_group.ranks)}")
-    except (AssertionError, AttributeError):
-        logger.info(f"Rank {global_rank}: Tensor Parallel: Not initialized")
-
-    # Print pipeline parallel group ranks
-    try:
-        pp_group = get_pp_group()
-        logger.info(f"Rank {global_rank}: Pipeline Parallel: {sorted(pp_group.ranks)}")
-    except (AssertionError, AttributeError):
-        logger.info(f"Rank {global_rank}: Pipeline Parallel: Not initialized")
-
-    # Print data parallel group ranks
-    try:
-        dp_group = get_dp_group()
-        logger.info(f"Rank {global_rank}: Data Parallel: {sorted(dp_group.ranks)}")
-    except (AssertionError, AttributeError):
-        logger.info(f"Rank {global_rank}: Data Parallel: Not initialized")
-
-    # Print token parallel group ranks
-    try:
-        tknp_group = get_tknp_group()
-        logger.info(f"Rank {global_rank}: Token Parallel: {sorted(tknp_group.ranks)}")
-    except (AssertionError, AttributeError):
-        logger.info(f"Rank {global_rank}: Token Parallel: Not initialized")
-
 
 class Worker(WorkerBase):
 
@@ -124,8 +82,7 @@ class Worker(WorkerBase):
                 on_trace_ready=torch.profiler.tensorboard_trace_handler(
                     torch_profiler_trace_dir, use_gzip=True))
         else:
-            self.profiler = None
-            
+            self.profiler = None            
         # TKNP
         self.root_rank = is_root_rank()
 
@@ -468,7 +425,7 @@ def init_worker_distributed_environment(
     ensure_model_parallel_initialized(parallel_config.tensor_parallel_size,
                                       parallel_config.pipeline_parallel_size)
 
-    _print_worker_rank_info(rank)
+    _print_worker_rank_info(rank)   # TKNP, print rank information
     ensure_kv_transfer_initialized(vllm_config)
 
 

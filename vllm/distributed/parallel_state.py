@@ -912,6 +912,45 @@ def is_root_rank() -> bool:
         return True
     return get_tknp_rank() == 0
 
+def _print_worker_rank_info(rank: int) -> None:
+    """Print rank information for this worker process."""
+    import os
+    from vllm.distributed.parallel_state import (
+        get_tp_group, get_pp_group, get_dp_group
+    )
+    global_rank = torch.distributed.get_rank()
+    
+    logger.info(f"Worker Rank {global_rank} (PID: {os.getpid()}) - Parallel Groups:")
+    
+    # Print tensor parallel group ranks
+    try:
+        tp_group = get_tp_group()
+        logger.info(f"Rank {global_rank}: Tensor Parallel: {sorted(tp_group.ranks)}")
+    except (AssertionError, AttributeError):
+        logger.info(f"Rank {global_rank}: Tensor Parallel: Not initialized")
+
+    # Print pipeline parallel group ranks
+    try:
+        pp_group = get_pp_group()
+        logger.info(f"Rank {global_rank}: Pipeline Parallel: {sorted(pp_group.ranks)}")
+    except (AssertionError, AttributeError):
+        logger.info(f"Rank {global_rank}: Pipeline Parallel: Not initialized")
+
+    # Print data parallel group ranks
+    try:
+        dp_group = get_dp_group()
+        logger.info(f"Rank {global_rank}: Data Parallel: {sorted(dp_group.ranks)}")
+    except (AssertionError, AttributeError):
+        logger.info(f"Rank {global_rank}: Data Parallel: Not initialized")
+
+    # Print token parallel group ranks
+    try:
+        tknp_group = get_tknp_group()
+        logger.info(f"Rank {global_rank}: Token Parallel: {sorted(tknp_group.ranks)}")
+    except (AssertionError, AttributeError):
+        logger.info(f"Rank {global_rank}: Token Parallel: Not initialized")
+
+
 @contextmanager
 def graph_capture(device: torch.device):
     """
