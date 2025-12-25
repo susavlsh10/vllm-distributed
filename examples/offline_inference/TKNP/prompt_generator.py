@@ -12,7 +12,7 @@ from transformers import AutoTokenizer
 import argparse
 
 # Cache directory
-CACHE_DIR = Path("TKNP/prompt_cache")
+CACHE_DIR = Path("examples/offline_inference/TKNP/prompt_cache")
 
 def generate_benchmark_prompts(
     batch_size: int,

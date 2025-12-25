@@ -99,8 +99,7 @@ class KVCacheCoordinator(ABC):
             for manager in self.single_type_managers)
 
     def cache_blocks(self, request: Request, block_hashes: list[BlockHash],
-                     num_computed_tokens: int,
-                     tknp_skip_caching: bool = False) -> None:
+                     num_computed_tokens: int) -> None:
         """
         Cache the blocks for the request.
 
@@ -110,12 +109,6 @@ class KVCacheCoordinator(ABC):
             num_tokens: The total number of tokens that need to be cached 
                 (including tokens that are already cached).
         """
-        
-        # TKNP: Skip caching for requests not assigned to this rank
-        if tknp_skip_caching:
-            print(f"Skipping caching for request {request.request_id}")
-            return
-        
         for manager in self.single_type_managers:
             manager.cache_blocks(request, block_hashes, num_computed_tokens)
 

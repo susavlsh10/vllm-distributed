@@ -1,23 +1,22 @@
-# Example usage:
-# With token parallelism: 
-# torchrun --nproc-per-node=2 TKNP/test_prefix_caching.py --tensor-parallel-size 1 --enable-token-parallel --token-parallel-size 2 --batch-size 16 --seq-length 2048
+"""
+Inference benchmarking script for vLLM with Token Parallelism (TKNP) support.
 
-# Without token parallelism: torchrun --nproc-per-node=2 TKNP/test_prefix_caching.py --tensor-parallel-size 1 --pipeline-parallel-size 2 --batch-size 16 --seq-length 2048
-# General tests: torchrun --nproc-per-node=2 TKNP/test_prefix_caching.py --tensor-parallel-size 2 --batch-size 16 --seq-length 2048
+Example usage:
+Token parallelism: 
+torchrun --nproc-per-node=2 examples/offline_inference/TKNP/tknp_inference_benchmarks.py --tensor-parallel-size 1 --enable-token-parallel --token-parallel-size 2 --batch-size 16 --seq-length 4096
+
+Tensor parallelism:
+torchrun --nproc-per-node=2 examples/offline_inference/TKNP/tknp_inference_benchmarks.py --tensor-parallel-size 2 --batch-size 16 --seq-length 4096
+
+Pipeline parallelism:
+torchrun --nproc-per-node=2 examples/offline_inference/TKNP/tknp_inference_benchmarks.py --tensor-parallel-size 1 --pipeline-parallel-size 2 --batch-size 16 --seq-length 4096
+
+"""
+
 
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
-
-"""
-experimental support for tensor-parallel + token-parallel inference with torchrun,
-see https://github.com/vllm-project/vllm/issues/11400 for
-the motivation and use case for this example.
-run the script with `torchrun --nproc-per-node=2 torchrun_example.py`,
-the argument 2 should match the `tensor_parallel_size` below.
-see `tests/distributed/test_torchrun_example.py` for the unit test.
-
-"""
 
 import argparse
 import torch.distributed as dist
@@ -27,7 +26,6 @@ from prompt_generator import generate_benchmark_prompts
 
 import torch
 import random
-import time
 import numpy as np
 
 def parse_args():
@@ -56,6 +54,8 @@ def parse_args():
                         help="Sequence length for prompts (default: 128)")
     parser.add_argument("--print-outputs", action="store_true",
                         help="Print generated outputs")
+    parser.add_argument("--decode-tokens", type=int, default=100,
+                        help="Number of tokens to decode during benchmarking (default: 100)")
 
     return parser.parse_args()
 
@@ -63,6 +63,73 @@ def parse_args():
 torch.manual_seed(42)
 random.seed(42)
 np.random.seed(42)
+
+
+def inference_benchmark(llm, prompts, args):
+    # Warmup run to avoid cold start overhead
+    warmup_params = SamplingParams(temperature=0, top_p=1.0, max_tokens=1)
+    _ = llm.generate(prompts[:1], warmup_params)
+    
+    # prefill timing
+    prefill_tokens = 1
+    sampling_params = SamplingParams(temperature=0, top_p=1.0, max_tokens=prefill_tokens)
+    
+    # Create CUDA events for precise GPU timing
+    prefill_start = torch.cuda.Event(enable_timing=True)
+    prefill_end = torch.cuda.Event(enable_timing=True)
+    
+    torch.cuda.synchronize()  # Ensure all previous operations complete
+    prefill_start.record()
+    
+    outputs = llm.generate(prompts, sampling_params)
+    
+    prefill_end.record()
+    torch.cuda.synchronize()  # Wait for completion
+    
+    prefill_time_ms = prefill_start.elapsed_time(prefill_end)
+
+    # prefill + decode (benchmarking)
+    decode_tokens = args.decode_tokens
+    sampling_params = SamplingParams(temperature=0, top_p=1.0, max_tokens=decode_tokens)
+    
+    decode_start = torch.cuda.Event(enable_timing=True)
+    decode_end = torch.cuda.Event(enable_timing=True)
+    
+    torch.cuda.synchronize()
+    decode_start.record()
+    
+    outputs = llm.generate(prompts, sampling_params)
+    
+    decode_end.record()
+    torch.cuda.synchronize()
+    
+    total_time_ms = decode_start.elapsed_time(decode_end)
+    decode_only_time_ms = total_time_ms - prefill_time_ms
+    average_decode_latency = decode_only_time_ms / decode_tokens
+    average_decode_system_throughput = (args.batch_size * decode_tokens) / (decode_only_time_ms / 1000)
+    average_decode_throughput_per_user = 1/(average_decode_latency / 1000)
+    
+    if dist.get_rank() == 0:
+        print(f"\n{'='*60}")
+        print(f"Timing Results (Batch size: {args.batch_size}, Seq length: {args.seq_length})")
+        print(f"{'='*60}")
+        print(f"Prefill time: {prefill_time_ms:.2f} ms")
+        print(f"Total time (prefill + {decode_tokens} decode): {total_time_ms:.2f} ms")
+        print(f"Decode only time: {decode_only_time_ms:.2f} ms")
+        print(f"System Decode Throughput: {average_decode_system_throughput:.2f} tokens/sec")
+        print(f"Average decode latency: {average_decode_latency:.2f} ms")
+        print(f"Average decode throughput per user: {average_decode_throughput_per_user:.2f} tokens/sec")
+
+        print(f"{'='*60}\n")
+
+    # all ranks will have the same outputs
+    if dist.get_rank() == 0 and args.print_outputs:
+        print("-" * 50)
+        for output in outputs:
+            prompt = output.prompt
+            generated_text = output.outputs[0].text
+            print(f"Prompt: {prompt[:128]!r} ....\nGenerated text: {generated_text!r}\n")
+            print("-" * 50)
 
 def main():
     args = parse_args()
@@ -84,9 +151,9 @@ def main():
         "max_model_len": args.max_model_len,
         "seed": args.seed,
         "enforce_eager": True,
-        "enable_prefix_caching": True,  # Enable or Disable prefix caching for benchmarking
-        "gpu_memory_utilization": 0.8,  # Max GPU memory utilization 
-        "max_num_batched_tokens": 8192, # max number of tokens in a single forward pass
+        "enable_prefix_caching": False,  # Disable prefix caching for benchmarking
+        "gpu_memory_utilization": 0.9,  # Max GPU memory utilization
+        "max_num_batched_tokens": 32768,  # max number of tokens in a single forward pass
     }
     
     # Only add token parallel configs if token parallelism is enabled
@@ -121,42 +188,13 @@ def main():
     dist.broadcast_object_list(prompts_list, src=0)
     prompts = prompts_list[0]
     
+    # print(f"Rank {dist.get_rank()} received {len(prompts)} prompts.")
+    # print(f"Rank {dist.get_rank()} prompts: {prompts}")
+    # assert False, "Debugging: Stop execution here to check prompt distribution."
+    
     # Create sampling parameters, the same across all ranks
-    sampling_params = SamplingParams(temperature=0.8, top_p=0.95, max_tokens=1)
-    # measure time to generate
-    start_time = time.perf_counter()
-    outputs = llm.generate(prompts, sampling_params)
-    torch.cuda.synchronize()
-    end_time = time.perf_counter()
-    if dist.get_rank() == 0:
-        print(f"Time taken to generate prefill outputs: {end_time - start_time:.2f} seconds")
-        print("=" * 100)
-
-
-    # Create sampling parameters, the same across all ranks
-    decode_tokens = 100
-    sampling_params = SamplingParams(temperature=0.8, top_p=0.95, max_tokens=decode_tokens)
-    # measure time to generate
-    start_time = time.perf_counter()
-    outputs = llm.generate(prompts, sampling_params)
-    torch.cuda.synchronize()
-    end_time = time.perf_counter()
-    if dist.get_rank() == 0:
-        
-        print(f"Time taken to generate decode outputs: {end_time - start_time:.2f} seconds")
-        average_decode_latency = (end_time - start_time) / (decode_tokens)
-        print(f"Average decode latency: {average_decode_latency:.2f} seconds")  
-        print("=" * 100)
-
-
-    # all ranks will have the same outputs
-    if dist.get_rank() == 0 and args.print_outputs:
-        print("-" * 50)
-        for output in outputs:
-            prompt = output.prompt
-            generated_text = output.outputs[0].text
-            print(f"Prompt: {prompt[:128]!r} ....\nGenerated text: {generated_text!r}\n")
-            print("-" * 50)
+    
+    inference_benchmark(llm, prompts, args)
             
     # destroy the process group
     dist.destroy_process_group()

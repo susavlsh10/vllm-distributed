@@ -1884,9 +1884,6 @@ class ParallelConfig:
     class is dynamically inherited by the worker class. This is used to inject
     new attributes and methods to the worker class for use in collective_rpc
     calls."""
-    print_worker_ranks: bool = False
-    """Whether to print rank information in worker processes after distributed
-    initialization. Useful for debugging distributed setups."""
 
     world_size: int = field(init=False)
     """world_size is TPxPP, it affects the number of workers we create."""

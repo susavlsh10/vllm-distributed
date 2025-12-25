@@ -39,7 +39,6 @@ if TYPE_CHECKING:
 
 from vllm.distributed.parallel_state import (
     _print_worker_rank_info,
-    is_root_rank,
 )
 
 class Worker(WorkerBase):
@@ -82,9 +81,7 @@ class Worker(WorkerBase):
                 on_trace_ready=torch.profiler.tensorboard_trace_handler(
                     torch_profiler_trace_dir, use_gzip=True))
         else:
-            self.profiler = None            
-        # TKNP
-        self.root_rank = is_root_rank()
+            self.profiler = None
 
     def sleep(self, level: int = 1) -> None:
         from vllm.device_allocator.cumem import CuMemAllocator
@@ -171,7 +168,6 @@ class Worker(WorkerBase):
                                             self.distributed_init_method,
                                             self.local_rank,
                                             current_platform.dist_backend)
-        
         # Set random seed.
         set_random_seed(self.model_config.seed)
 
@@ -300,12 +296,11 @@ class Worker(WorkerBase):
                     num_tokens=max_num_reqs,
                     skip_eplb=True,
                 )
-            if self.root_rank:
-                if self.model_runner.is_pooling_model:
-                    self.model_runner._dummy_pooler_run(hidden_states)
-                else:
-                    self.model_runner._dummy_sampler_run(
-                        hidden_states=last_hidden_states)
+            if self.model_runner.is_pooling_model:
+                self.model_runner._dummy_pooler_run(hidden_states)
+            else:
+                self.model_runner._dummy_sampler_run(
+                    hidden_states=last_hidden_states)
 
         # Reset the seed to ensure that the random state is not affected by
         # the model initialization and profiling.
@@ -421,10 +416,8 @@ def init_worker_distributed_environment(
     init_distributed_environment(parallel_config.world_size, rank,
                                  distributed_init_method, local_rank, backend)
     
-
     ensure_model_parallel_initialized(parallel_config.tensor_parallel_size,
                                       parallel_config.pipeline_parallel_size)
-
     _print_worker_rank_info(rank)   # TKNP, print rank information
     ensure_kv_transfer_initialized(vllm_config)
 
